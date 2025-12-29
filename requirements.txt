@@ -1,0 +1,22 @@
+# VeriPulse Python Dependencies
+
+# Vision
+opencv-python>=4.8.0
+mediapipe>=0.10.0
+
+# Signal Processing
+numpy>=1.24.0
+scipy>=1.11.0
+
+# ML (Explainable)
+scikit-learn>=1.3.0
+
+# Backend
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+websockets>=12.0
+
+# Utils
+pydantic>=2.5.0
+python-dotenv>=1.0.0
