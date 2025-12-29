@@ -1,9 +1,21 @@
-"""Generate liveness challenges."""
+# challenge_generator.py
+import random
+import time
 
-class ChallengeGenerator:
-    def __init__(self):
-        pass
-    
-    def generate(self):
-        """Generate random challenge (blink, head turn, etc)."""
-        pass
+CHALLENGES = [
+    "Blink twice",
+    "Turn your head left",
+    "Turn your head right",
+    "Look up",
+    "Look down",
+    "Say hello"
+]
+
+def generate_challenge():
+    challenge = random.choice(CHALLENGES)
+    print("CHALLENGE:", challenge)
+    return challenge
+
+if __name__ == "__main__":
+    c = generate_challenge()
+    print(c)
