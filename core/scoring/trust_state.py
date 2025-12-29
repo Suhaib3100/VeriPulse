@@ -5,3 +5,4 @@ class TrustState(Enum):
     VERIFIED = "verified"
     SUSPICIOUS = "suspicious"
     SYNTHETIC = "likely_synthetic"
+
