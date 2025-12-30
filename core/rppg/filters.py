@@ -1,9 +1,7 @@
-"""Signal filtering - bandpass, detrending."""
+# filters.py
+import numpy as np
+from scipy.signal import butter, filtfilt
 
-class BandpassFilter:
-    def __init__(self, low=0.7, high=3.0, fs=30):
-        pass
-    
-    def apply(self, signal):
-        """Apply bandpass filter to rPPG signal."""
-        pass
+def bandpass_filter(signal, fps, low=0.7, high=4.0, order=3):
+    b, a = butter(order, [low, high], btype="bandpass", fs=fps)
+    return filtfilt(b, a, signal)
