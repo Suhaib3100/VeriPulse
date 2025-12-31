@@ -4,9 +4,19 @@ import mediapipe as mp
 import numpy as np
 import time
 
-mp_face = mp.solutions.face_mesh
+try:
+    mp_face = mp.solutions.face_mesh
+except AttributeError:
+    # Fallback or mock for environments where mediapipe is not fully installed
+    class MockSolutions:
+        face_mesh = None
+    mp_face = MockSolutions()
+    print("Warning: mediapipe.solutions not found. Motion validation will be disabled.")
 
 def validate_motion(duration=5):
+    if mp_face.face_mesh is None:
+        return 0.0
+        
     cap = cv2.VideoCapture(0)
     face_mesh = mp_face.FaceMesh(refine_landmarks=True)
     movements = []

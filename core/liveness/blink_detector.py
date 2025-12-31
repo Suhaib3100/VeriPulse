@@ -4,7 +4,12 @@ import numpy as np
 import mediapipe as mp
 import time
 
-mp_face = mp.solutions.face_mesh
+try:
+    mp_face = mp.solutions.face_mesh
+except AttributeError:
+    class MockSolutions:
+        face_mesh = None
+    mp_face = MockSolutions()
 
 def eye_aspect_ratio(eye):
     A = np.linalg.norm(eye[1] - eye[5])
