@@ -4,29 +4,58 @@
 
 ## Quick Start
 
+### 1. Installation
 ```bash
-# Backend
+# Create virtual environment
+python -m venv .venv
+# Activate it (Windows)
+.venv\Scripts\Activate
+# Install dependencies
 pip install -r requirements.txt
-cd apps/backend && uvicorn main:app --reload
-
-# Frontend (after Next.js init in apps/web)
-cd apps/web && npm run dev
 ```
+
+### 2. Run Liveness Demo
+Test the physiological liveness detection (rPPG) with your webcam:
+```bash
+python run_veripulse_demo.py
+```
+
+### 3. Run Backend API
+```bash
+cd apps/backend
+uvicorn main:app --reload
+```
+
+### 4. Frontend
+```bash
+cd apps/web
+npm run dev
+```
+
+## Features
+- **Physiological Liveness**: Extracts heart rate (rPPG) from facial video to detect synthetic faces.
+- **Active Challenges**: Validates user response to random prompts (blinks, head turns).
+- **Trust Scoring**: Fuses multiple signals into a single trust score.
 
 ## Structure
 
-- `core/` - Product logic (vision, rPPG, liveness, scoring, policy)
+- `core/`
+  - `liveness/` - Liveness logic (Physiological & Active)
+  - `rppg/` - Signal extraction (POS algorithm) & filtering
+  - `vision/` - Face detection & tracking
+  - `scoring/` - Trust scoring models
+  - `policy/` - Security policies
 - `apps/backend/` - FastAPI server
-- `apps/web/` - Next.js frontend (initialize separately)
-- `scripts/` - Demo runners
-- `docs/` - Architecture docs
+- `apps/web/` - Next.js frontend
+- `scripts/` - Utility scripts
+- `run_veripulse_demo.py` - Main demo entry point
 
 ## Trust States
 
-| Score | State |
-|-------|-------|
-| ≥ 0.75 | ✅ Verified |
-| 0.4–0.75 | ⚠️ Suspicious |
-| < 0.4 | 🚫 Likely Synthetic |
+| Score | State | Description |
+|-------|-------|-------------|
+| ≥ 0.7 | ✅ Verified | Consistent physiological signals & passed challenges |
+| 0.4–0.7 | ⚠️ Suspicious | Inconsistent signals or missing data |
+| < 0.4 | 🚫 Likely Synthetic | No pulse detected or failed challenges |
 
 MIT License
