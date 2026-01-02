@@ -21,3 +21,8 @@ websockets>=12.0
 pydantic>=2.5.0
 python-dotenv>=1.0.0
 pydantic-settings
+librosa>=0.10.0
+pymongo>=4.6.0
+azure-monitor-query>=1.2.0
+azure-identity>=1.15.0
+pandas>=2.1.0

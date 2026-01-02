@@ -1,0 +1,15 @@
+{
+    "agent_id": "agent-007",
+    "generated_at": "2026-01-01T13:40:00.260656",
+    "metrics": {
+        "duration_mean": 2295.605633802817,
+        "duration_std": 1485.1956145858553,
+        "duration_max": 4980.0,
+        "allowed_actions": [
+            "download_file",
+            "list_emails",
+            "get_user_profile",
+            "delete_user"
+        ]
+    }
+}
