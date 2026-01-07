@@ -8,10 +8,12 @@ export default function Home() {
   const [socket, setSocket] = useState<WebSocket | null>(null);
   const [result, setResult] = useState<any>(null);
   const [isScanning, setIsScanning] = useState(false);
+  const [scanComplete, setScanComplete] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'live' | 'upload'>('live');
   const [uploadResult, setUploadResult] = useState<any>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const sendingRef = useRef(true);  // Control frame sending
 
   useEffect(() => {
     return () => {
@@ -33,7 +35,7 @@ export default function Home() {
     formData.append('file', file);
 
     try {
-      const response = await fetch('http://localhost:8000/api/v1/analyze/video', {
+      const response = await fetch('http://localhost:8000/api/v1/veripulse/analyze', {
         method: 'POST',
         body: formData,
       });
@@ -61,18 +63,29 @@ export default function Home() {
         videoRef.current.srcObject = stream;
       }
 
-      // Initialize WebSocket
-      const ws = new WebSocket("ws://localhost:8000/ws/liveness");
+      // Initialize WebSocket - Using new VeriPulse Engine
+      const ws = new WebSocket("ws://localhost:8000/ws/veripulse");
       
       ws.onopen = () => {
         console.log("Connected to VeriPulse Engine");
         setIsScanning(true);
+        setScanComplete(false);
+        setResult(null);
         setError(null);
+        sendingRef.current = true;
+        // Send reset to start fresh scan
+        ws.send(JSON.stringify({ action: "reset" }));
       };
 
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         setResult(data);
+        
+        // Stop sending frames once we get a completed result
+        if (data.status === "completed") {
+          sendingRef.current = false;
+          setScanComplete(true);
+        }
       };
 
       ws.onerror = (err) => {
@@ -98,6 +111,7 @@ export default function Home() {
 
       processor.onaudioprocess = (e) => {
         if (ws.readyState !== WebSocket.OPEN) return;
+        if (!sendingRef.current) return;  // Stop sending if scan complete
 
         // Get raw PCM data (float32)
         const inputData = e.inputBuffer.getChannelData(0);
@@ -151,7 +165,21 @@ export default function Home() {
       videoRef.current.srcObject = null;
     }
     setIsScanning(false);
+    setScanComplete(false);
     setResult(null);
+    sendingRef.current = false;
+  };
+
+  const startNewScan = () => {
+    // Reset state for new scan
+    setScanComplete(false);
+    setResult(null);
+    sendingRef.current = true;
+    
+    // Send reset command to backend
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ action: "reset" }));
+    }
   };
 
   return (
@@ -224,27 +252,42 @@ export default function Home() {
             {result?.status === "completed" && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 backdrop-blur-md z-20 animate-in fade-in duration-300">
                 <div className="text-6xl mb-6 animate-bounce">
-                  {result.classification === "REAL HUMAN" ? "✅" : "🚫"}
+                  {result.classification === "REAL HUMAN" || result.classification?.includes("LIKELY REAL") ? "✅" : 
+                   result.classification?.includes("UNCERTAIN") ? "⚠️" : "🚫"}
                 </div>
                 <h2 className={`text-4xl font-bold mb-2 tracking-tight ${
-                  result.classification === "REAL HUMAN" ? "text-emerald-400" : "text-red-500"
+                  result.classification === "REAL HUMAN" ? "text-emerald-400" :
+                  result.classification?.includes("LIKELY REAL") ? "text-emerald-500" :
+                  result.classification?.includes("LIKELY FAKE") ? "text-orange-500" :
+                  result.classification?.includes("UNCERTAIN") ? "text-yellow-400" :
+                  "text-red-500"
                 }`}>
                   {result.classification}
                 </h2>
-                <div className="flex gap-4 text-sm text-zinc-400 mb-8">
+                <div className="flex gap-4 text-sm text-zinc-400 mb-4">
                   <span>Score: {(result.score * 100).toFixed(1)}%</span>
                   <span>•</span>
                   <span>{result.liveness} CONFIDENCE</span>
                 </div>
-                <button
-                  onClick={() => { 
-                    stopScanning(); 
-                    setTimeout(startScanning, 100); 
-                  }}
-                  className="px-8 py-3 bg-white text-black hover:bg-zinc-200 rounded-full font-bold transition-all transform hover:scale-105"
-                >
-                  Start New Scan
-                </button>
+                {result.bpm && (
+                  <div className="text-emerald-400 text-sm mb-4">
+                    ❤️ Heart Rate: {Math.round(result.bpm)} BPM
+                  </div>
+                )}
+                <div className="flex gap-4">
+                  <button
+                    onClick={startNewScan}
+                    className="px-8 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-full font-bold transition-all transform hover:scale-105"
+                  >
+                    Scan Again
+                  </button>
+                  <button
+                    onClick={stopScanning}
+                    className="px-6 py-3 bg-zinc-700 hover:bg-zinc-600 text-white rounded-full font-medium transition-all"
+                  >
+                    Stop
+                  </button>
+                </div>
               </div>
             )}
             
@@ -282,7 +325,9 @@ export default function Home() {
                 <div className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Final Classification</div>
                 <div className={`text-3xl font-bold ${
                   result?.classification === "REAL HUMAN" ? "text-emerald-400" : 
-                  result?.classification?.includes("AI") ? "text-red-500" : "text-yellow-400"
+                  result?.classification?.includes("LIKELY REAL") ? "text-emerald-500" :
+                  result?.classification?.includes("LIKELY FAKE") ? "text-orange-500" :
+                  result?.classification?.includes("AI") || result?.classification?.includes("FAKE") ? "text-red-500" : "text-yellow-400"
                 }`}>
                   {result?.classification || "WAITING..."}
                 </div>
@@ -369,44 +414,80 @@ export default function Home() {
                 <div className="text-center">
                   <div className="text-sm text-zinc-500 uppercase tracking-wider mb-2">Analysis Verdict</div>
                   <div className={`text-4xl font-bold ${
-                    uploadResult.classification === "REAL HUMAN" ? "text-emerald-400" : "text-red-500"
+                    uploadResult.classification === "REAL HUMAN" ? "text-emerald-400" :
+                    uploadResult.classification?.includes("LIKELY REAL") ? "text-emerald-500" :
+                    uploadResult.classification?.includes("LIKELY FAKE") ? "text-orange-500" :
+                    uploadResult.classification?.includes("UNCERTAIN") ? "text-yellow-400" :
+                    "text-red-500"
                   }`}>
                     {uploadResult.classification}
                   </div>
+                  {uploadResult.threat_type && uploadResult.threat_type !== "none" && (
+                    <div className="mt-2 text-sm text-yellow-400 uppercase">
+                      Threat Detected: {uploadResult.threat_type.replace(/_/g, ' ')}
+                    </div>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
                   <MetricCard 
                     label="Overall Score" 
                     value={`${(uploadResult.score * 100).toFixed(1)}%`}
-                    color={uploadResult.score > 0.8 ? "text-emerald-400" : "text-red-400"}
+                    color={uploadResult.score > 0.75 ? "text-emerald-400" : "text-red-400"}
                   />
                   <MetricCard 
-                    label="Audio Score" 
-                    value={`${(uploadResult.audio_score * 100).toFixed(1)}%`}
+                    label="Heart Rate" 
+                    value={uploadResult.bpm ? `${Math.round(uploadResult.bpm)} BPM` : "N/A"}
+                    color={uploadResult.bpm && uploadResult.bpm > 50 && uploadResult.bpm < 120 ? "text-emerald-400" : "text-yellow-400"}
                   />
                   <MetricCard 
-                    label="Video Score" 
-                    value={`${(uploadResult.video_score * 100).toFixed(1)}%`}
+                    label="Video Realness" 
+                    value={`${(uploadResult.video_score * 100).toFixed(0)}%`}
+                    color={uploadResult.video_score > 0.5 ? "text-emerald-400" : "text-red-400"}
                   />
                   <MetricCard 
-                    label="Texture Score" 
-                    value={`${(uploadResult.texture_score * 100).toFixed(1)}%`}
+                    label="Audio Realness" 
+                    value={`${(uploadResult.audio_score * 100).toFixed(0)}%`}
+                    color={uploadResult.audio_score > 0.5 ? "text-emerald-400" : "text-red-400"}
+                  />
+                  <MetricCard 
+                    label="Pulse (rPPG)" 
+                    value={uploadResult.components?.rppg ? `${(uploadResult.components.rppg * 100).toFixed(0)}%` : "--"}
+                    color={uploadResult.components?.rppg > 0.5 ? "text-emerald-400" : "text-red-400"}
+                  />
+                  <MetricCard 
+                    label="Texture" 
+                    value={uploadResult.components?.texture ? `${(uploadResult.components.texture * 100).toFixed(0)}%` : "--"}
+                    color={uploadResult.components?.texture > 0.5 ? "text-emerald-400" : "text-red-400"}
+                  />
+                  <MetricCard 
+                    label="Motion" 
+                    value={uploadResult.components?.motion ? `${(uploadResult.components.motion * 100).toFixed(0)}%` : "--"}
+                    color={uploadResult.components?.motion > 0.5 ? "text-emerald-400" : "text-red-400"}
+                  />
+                  <MetricCard 
+                    label="Blink" 
+                    value={uploadResult.components?.blink ? `${(uploadResult.components.blink * 100).toFixed(0)}%` : "--"}
+                    color={uploadResult.components?.blink > 0.5 ? "text-emerald-400" : "text-red-400"}
                   />
                 </div>
 
                 <div className="space-y-2">
                   <h3 className="text-sm font-medium text-zinc-500">Detailed Findings</h3>
-                  <div className="bg-black/20 p-4 rounded-lg space-y-2">
+                  <div className="bg-black/20 p-4 rounded-lg space-y-2 max-h-64 overflow-y-auto">
                     {uploadResult.reasons.length > 0 ? (
                       uploadResult.reasons.map((r: string, i: number) => (
-                        <div key={i} className="flex items-center gap-2 text-red-300">
-                          <span>⚠️</span> {r}
+                        <div key={i} className={`flex items-start gap-2 ${
+                          r.includes('✓') ? 'text-emerald-400' : 
+                          r.includes('⚠️') ? 'text-red-400' : 'text-yellow-300'
+                        }`}>
+                          <span className="flex-shrink-0">{r.includes('✓') ? '✅' : r.includes('⚠️') ? '⚠️' : '⚡'}</span>
+                          <span>{r.replace(/^[✓⚠️⚡\s]+/, '')}</span>
                         </div>
                       ))
                     ) : (
                       <div className="flex items-center gap-2 text-emerald-400">
-                        <span>✅</span> No anomalies detected.
+                        <span>✅</span> All checks passed - No anomalies detected.
                       </div>
                     )}
                   </div>

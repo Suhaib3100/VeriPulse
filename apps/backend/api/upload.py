@@ -50,12 +50,14 @@ async def analyze_video(file: UploadFile = File(...)):
         frame_count = 0
         faces_detected_count = 0
         max_frames = 150 # Analyze up to 5 seconds
+        has_video_track = False
         
         while frame_count < max_frames:
             ret, frame = cap.read()
             if not ret:
                 break
-                
+            
+            has_video_track = True    
             frame_count += 1
             
             # Face Detection
@@ -93,32 +95,62 @@ async def analyze_video(file: UploadFile = File(...)):
         cap.release()
 
         # Process Audio
+        audio_score = 0.5 # Default to uncertain
+        has_audio_track = False
         try:
             # librosa can load audio directly from video file
-            y, sr = librosa.load(tmp_path, sr=16000, duration=5.0)
-            audio_detector.audio_buffer = y
-            audio_score = audio_detector.analyze()
+            # Use a larger duration for better analysis
+            y, sr = librosa.load(tmp_path, sr=16000, duration=10.0)
+            if len(y) > 0:
+                has_audio_track = True
+                # Check for silence
+                if np.max(np.abs(y)) < 0.01:
+                    audio_score = 0.5 # Silent
+                else:
+                    audio_detector.audio_buffer = y
+                    audio_score = audio_detector.analyze()
         except Exception as e:
             print(f"Audio load error: {e}")
-            audio_score = 0.5 # Uncertain
+            # If librosa fails, it might be a video without audio or format issue
+            pass
 
-        # Compute rPPG Score (Simplified for file upload)
-        rppg_score = 0.5
-        valid_signals = 0
+        # Compute rPPG Score (Advanced)
+        rppg_score = 0.0
+        feature_extractor = FeatureExtractor(fs=30)
+        
+        valid_rois = 0
+        total_snr = 0
+        
         for name, data in roi_buffers.items():
             if len(data) > 30:
                 data_np = np.array(data)
+                # Extract signal using POS method
                 raw = signal_extractor._pos(data_np)
                 filtered = bandpass_filter.apply(raw)
-                # Check signal variance/strength
-                if np.std(filtered) > 0.1:
-                    valid_signals += 1
+                
+                # Extract features (SNR, Periodicity)
+                feats = feature_extractor.extract(filtered)
+                
+                # Score based on SNR and Periodicity
+                # Real pulse usually has SNR > 2.0 and Periodicity > 0.6
+                roi_score = 0.0
+                if feats['snr'] > 1.5: roi_score += 0.4
+                if feats['snr'] > 3.0: roi_score += 0.2
+                if feats['periodicity'] > 0.5: roi_score += 0.4
+                
+                if roi_score > 0.5:
+                    valid_rois += 1
+                    total_snr += feats['snr']
         
-        if valid_signals >= 2:
-            rppg_score = 0.8
-        elif valid_signals == 1:
-            rppg_score = 0.6
-            
+        if valid_rois > 0:
+            # High confidence if multiple ROIs show good signal
+            rppg_score = min(1.0, (valid_rois / 3.0) * 0.8 + (total_snr / (valid_rois * 5.0)) * 0.2)
+            # Boost score if we have strong signals
+            if valid_rois >= 2 and total_snr/valid_rois > 2.5:
+                rppg_score = max(rppg_score, 0.9)
+        else:
+            rppg_score = 0.2 # Low confidence/No pulse detected
+
         # Get Scores
         blink_score = blink_detector.get_score()
         motion_score = motion_validator.get_score()
@@ -126,30 +158,111 @@ async def analyze_video(file: UploadFile = File(...)):
         
         # Fusion Logic
         reasons = []
+        video_score = 0.5
         
+        if not has_video_track:
+            # Audio Only File
+            final_score = audio_score
+            if audio_score < 0.4: 
+                classification = "AI AUDIO GENERATED"
+                reasons.append("Synthetic audio signatures detected")
+            elif audio_score > 0.7:
+                classification = "REAL HUMAN AUDIO"
+            else:
+                classification = "UNCERTAIN"
+                
+            return {
+                "classification": classification,
+                "score": float(final_score),
+                "video_score": 0.0,
+                "audio_score": float(audio_score),
+                "texture_score": 0.0,
+                "reasons": reasons,
+                "components": {
+                    "rppg": 0.0,
+                    "blink": 0.0,
+                    "motion": 0.0,
+                    "texture": 0.0,
+                    "audio": float(audio_score)
+                }
+            }
+
+        # Video Processing Logic
         if faces_detected_count < 10:
             # If no face detected (or very few frames), rely primarily on texture analysis
             video_score = texture_score
             reasons.append("No consistent face detected - relying on texture analysis")
+            
+            # If texture is high but no face, it's likely a real video of something else, or a face that wasn't detected.
+            # We should NOT classify as "REAL HUMAN" if no face is found.
+            if texture_score > 0.7:
+                classification = "REAL VIDEO (NO FACE)"
+                final_score = texture_score
+            elif texture_score < 0.3:
+                classification = "AI VIDEO GENERATED"
+                final_score = texture_score
+            else:
+                classification = "UNCERTAIN"
+                final_score = 0.5
+                
+            return {
+                "classification": classification,
+                "score": float(final_score),
+                "video_score": float(video_score),
+                "audio_score": float(audio_score),
+                "texture_score": float(texture_score),
+                "reasons": reasons,
+                "components": {
+                    "rppg": 0.0,
+                    "blink": 0.0,
+                    "motion": 0.0,
+                    "texture": float(texture_score),
+                    "audio": float(audio_score)
+                }
+            }
+            
         else:
-            video_score = (rppg_score * 0.4) + (texture_score * 0.3) + (motion_score * 0.2) + (blink_score * 0.1)
+            # Weighted Fusion
+            # rPPG is the strongest physiological indicator
+            # Texture is the strongest artifact indicator
+            video_score = (rppg_score * 0.35) + (texture_score * 0.35) + (motion_score * 0.15) + (blink_score * 0.15)
         
-        if blink_score < 0.5 and faces_detected_count >= 10: reasons.append("Low blink rate")
-        if motion_score < 0.5 and faces_detected_count >= 10: reasons.append("Unnatural motion")
-        if texture_score < 0.5: reasons.append("Smooth/Blurry texture (Possible AI Video)")
-        if audio_score < 0.4: reasons.append("Synthetic audio signatures detected")
+        # Generate Explanations
+        if blink_score < 0.4 and faces_detected_count >= 30: reasons.append(f"Abnormal blink rate (Score: {blink_score:.2f})")
+        if motion_score < 0.4 and faces_detected_count >= 30: reasons.append(f"Unnatural head motion (Score: {motion_score:.2f})")
+        if texture_score < 0.4: reasons.append(f"Digital artifacts/Smoothness detected (Score: {texture_score:.2f})")
+        if rppg_score < 0.4 and faces_detected_count >= 30: reasons.append(f"No natural pulse detected (Score: {rppg_score:.2f})")
+        if has_audio_track and audio_score < 0.4: reasons.append(f"Synthetic audio signatures (Score: {audio_score:.2f})")
 
+        # Final Verdict Calculation
         final_score = video_score
-        if audio_score != 0.5:
+        if has_audio_track and audio_score != 0.5:
+             # If audio is clearly fake, drag down the score heavily
              if audio_score < 0.4: final_score = min(final_score, audio_score)
-             elif audio_score > 0.7: final_score = (final_score * 0.6) + (audio_score * 0.4)
+             # If audio is clearly real, it can boost a bit, but video artifacts are more important
+             elif audio_score > 0.8: final_score = (final_score * 0.7) + (audio_score * 0.3)
 
         classification = "UNCERTAIN"
-        if final_score >= 0.75: classification = "REAL HUMAN"
-        elif audio_score < 0.4 and video_score > 0.6: classification = "AI VOICE DETECTED"
-        elif texture_score < 0.3: classification = "AI VIDEO / DEEPFAKE"
-        elif video_score < 0.4: classification = "AI VIDEO / DEEPFAKE"
-        elif final_score < 0.6: classification = "POTENTIAL SPOOF"
+        
+        # Strict AI Detection Logic
+        if texture_score < 0.2:
+            classification = "AI VIDEO GENERATED"
+            final_score = min(final_score, 0.2)
+        elif has_audio_track and audio_score < 0.3:
+            classification = "AI AUDIO GENERATED"
+            final_score = min(final_score, 0.3)
+        elif rppg_score < 0.3 and faces_detected_count > 50:
+             # If we have a good face view but no pulse, it's likely a deepfake
+            classification = "DEEPFAKE DETECTED"
+            final_score = min(final_score, 0.35)
+        elif video_score < 0.4:
+            classification = "DEEPFAKE DETECTED"
+        elif final_score >= 0.75:
+            classification = "REAL HUMAN"
+        elif final_score < 0.6:
+            classification = "POTENTIAL SPOOF"
+        else:
+            classification = "UNCERTAIN"
 
         return {
             "classification": classification,
@@ -157,7 +270,14 @@ async def analyze_video(file: UploadFile = File(...)):
             "video_score": float(video_score),
             "audio_score": float(audio_score),
             "texture_score": float(texture_score),
-            "reasons": reasons
+            "reasons": reasons,
+            "components": {
+                "rppg": float(rppg_score),
+                "blink": float(blink_score),
+                "motion": float(motion_score),
+                "texture": float(texture_score),
+                "audio": float(audio_score)
+            }
         }
 
     finally:
