@@ -185,6 +185,17 @@ export default function Home() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 text-white p-8">
       <div className="max-w-4xl w-full space-y-8">
+        {/* Navigation */}
+        <div className="flex justify-end">
+          <a 
+            href="/sentinel" 
+            className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm transition-all"
+          >
+            <span>🛡️</span>
+            <span>Sentinel-X Dashboard</span>
+          </a>
+        </div>
+
         <div className="text-center space-y-2">
           <h1 className="text-4xl font-bold tracking-tight text-emerald-400">VeriPulse Engine</h1>
           <p className="text-zinc-400">Real-time Multimodal Liveness Detection</p>

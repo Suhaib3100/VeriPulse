@@ -43,18 +43,24 @@ def run_sentinel_background_tasks():
     if not SENTINEL_AVAILABLE:
         return
     
-    print("🛡️ Starting Sentinel-X Background Services...")
-    
-    # 1. Start Log Collector
-    collector = LogCollector()
-    collector_thread = threading.Thread(target=collector.run, daemon=True)
-    collector_thread.start()
-    
-    # 2. Start Anomaly Detector (for a demo agent)
-    # In production, this might iterate over all active agents
-    detector = AnomalyDetector("agent-007")
-    detector_thread = threading.Thread(target=detector.run, daemon=True)
-    detector_thread.start()
+    try:
+        print("🛡️ Starting Sentinel-X Background Services...")
+        
+        # 1. Start Log Collector
+        collector = LogCollector()
+        collector_thread = threading.Thread(target=collector.run, daemon=True)
+        collector_thread.start()
+        
+        # 2. Start Anomaly Detector (for a demo agent)
+        # In production, this might iterate over all active agents
+        try:
+            detector = AnomalyDetector("agent-007")
+            detector_thread = threading.Thread(target=detector.run, daemon=True)
+            detector_thread.start()
+        except Exception as e:
+            print(f"⚠️ AnomalyDetector failed to start: {e}")
+    except Exception as e:
+        print(f"⚠️ Sentinel-X background tasks failed: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -86,7 +92,15 @@ if LEGACY_AVAILABLE:
 app.include_router(veripulse_api.router, prefix="/api/v1", tags=["veripulse"])
 app.include_router(veripulse_api.router, tags=["websocket"])
 
-# Sentinel (optional)
+# Sentinel-X API (new comprehensive API)
+try:
+    from sentinel_x.api.server import router as sentinel_x_router
+    app.include_router(sentinel_x_router, prefix="/api", tags=["sentinel-x"])
+    print("✅ Sentinel-X API routes loaded")
+except ImportError as e:
+    print(f"⚠️ Sentinel-X API not available: {e}")
+
+# Legacy Sentinel (optional - kept for backward compatibility)
 if SENTINEL_AVAILABLE_API:
     try:
         app.include_router(sentinel.router, prefix="/api/sentinel", tags=["sentinel"])
