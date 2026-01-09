@@ -1,17 +1,20 @@
 // VeriPulse Chrome Extension - Content Script
-// Injects into YouTube, Instagram, Google Meet, Zoom, Teams
+// Auto-scans videos on YouTube, Instagram, Google Meet, Zoom, Teams
 
 (function() {
   'use strict';
   
-  // Full video scan settings - more frames for better accuracy
-  const SCAN_FRAME_COUNT = 15; // Analyze 15 frames across video
-  const SCAN_INTERVAL = 300; // Capture frame every 300ms = 4.5 seconds of video
+  // Auto-scan settings
+  const SCAN_FRAME_COUNT = 15;
+  const SCAN_INTERVAL = 300;
+  const AUTO_SCAN_DELAY = 1500; // Wait 1.5s after video starts
   
   let isScanning = false;
-  let scanButton = null;
   let resultOverlay = null;
-  let lastScanResult = null; // Track last result for re-scan
+  let currentVideoSrc = null;
+  let currentVideoElement = null;
+  let scanTimeout = null;
+  let lastScanTime = 0;
   
   // Initialize when DOM is ready
   if (document.readyState === 'loading') {
@@ -21,13 +24,15 @@
   }
   
   function init() {
-    console.log("VeriPulse content script loaded");
+    console.log("VeriPulse: Auto-scan initialized");
     
-    // Detect platform and inject UI
     const platform = detectPlatform();
     if (platform) {
-      injectScanButton(platform);
-      setupVideoObserver();
+      createResultOverlay();
+      setupAutoScan(platform);
+      
+      // Also watch for URL changes (SPA navigation)
+      setupNavigationWatcher(platform);
     }
   }
   
@@ -41,85 +46,207 @@
     return null;
   }
   
-  function injectScanButton(platform) {
-    // Remove existing button if any
-    const existing = document.getElementById('veripulse-scan-btn');
+  function createResultOverlay() {
+    // Remove existing
+    const existing = document.getElementById('veripulse-result');
     if (existing) existing.remove();
     
-    // Remove existing result overlay
-    const existingResult = document.getElementById('veripulse-result');
-    if (existingResult) existingResult.remove();
-    
-    // Create scan button
-    scanButton = document.createElement('div');
-    scanButton.id = 'veripulse-scan-btn';
-    scanButton.innerHTML = `
-      <div class="vp-btn-content">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-          <path d="M9 12l2 2 4-4"/>
-        </svg>
-        <span>Scan</span>
-      </div>
-    `;
-    
-    scanButton.addEventListener('click', () => {
-      // Always reset button for new scan
-      scanButton.className = '';
-      const content = scanButton.querySelector('.vp-btn-content span');
-      if (content) content.textContent = 'Scan';
-      startScan(platform);
-    });
-    document.body.appendChild(scanButton);
-    
-    // Create result overlay
     resultOverlay = document.createElement('div');
     resultOverlay.id = 'veripulse-result';
     resultOverlay.style.display = 'none';
     document.body.appendChild(resultOverlay);
   }
   
-  function setupVideoObserver() {
-    // Watch for video elements being added
-    const observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        for (const node of mutation.addedNodes) {
-          if (node.tagName === 'VIDEO' || (node.querySelector && node.querySelector('video'))) {
-            console.log("VeriPulse: Video detected");
-          }
-        }
+  function setupAutoScan(platform) {
+    console.log(`VeriPulse: Setting up auto-scan for ${platform}`);
+    
+    // Initial check for existing videos
+    setTimeout(() => checkForNewVideo(platform), 1000);
+    
+    // Watch for new videos and video changes
+    const observer = new MutationObserver(() => {
+      checkForNewVideo(platform);
+    });
+    
+    observer.observe(document.body, { 
+      childList: true, 
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['src', 'currentSrc']
+    });
+    
+    // Platform-specific watchers
+    if (platform === 'youtube') {
+      setupYouTubeWatcher();
+    } else if (platform === 'instagram') {
+      setupInstagramWatcher();
+    }
+  }
+  
+  function setupYouTubeWatcher() {
+    // YouTube uses SPA - watch for video ID changes
+    let lastVideoId = getYouTubeVideoId();
+    
+    setInterval(() => {
+      const newVideoId = getYouTubeVideoId();
+      if (newVideoId && newVideoId !== lastVideoId) {
+        console.log(`VeriPulse: New YouTube video detected: ${newVideoId}`);
+        lastVideoId = newVideoId;
+        resetAndScan('youtube');
+      }
+    }, 500);
+    
+    // Also watch for Shorts scrolling
+    document.addEventListener('scroll', debounce(() => {
+      if (window.location.href.includes('/shorts/')) {
+        checkForNewVideo('youtube');
+      }
+    }, 300), true);
+  }
+  
+  function setupInstagramWatcher() {
+    // Instagram Reels - scroll detection
+    let lastScrollTop = 0;
+    
+    document.addEventListener('scroll', debounce(() => {
+      const scrollTop = window.scrollY || document.documentElement.scrollTop;
+      if (Math.abs(scrollTop - lastScrollTop) > 200) {
+        lastScrollTop = scrollTop;
+        checkForNewVideo('instagram');
+      }
+    }, 300), true);
+  }
+  
+  function setupNavigationWatcher(platform) {
+    // Watch for URL changes (SPA navigation)
+    let lastUrl = window.location.href;
+    
+    const urlObserver = new MutationObserver(() => {
+      if (window.location.href !== lastUrl) {
+        console.log(`VeriPulse: URL changed to ${window.location.href}`);
+        lastUrl = window.location.href;
+        resetAndScan(platform);
       }
     });
     
-    observer.observe(document.body, { childList: true, subtree: true });
+    urlObserver.observe(document.body, { childList: true, subtree: true });
+    
+    // Also listen for popstate (back/forward)
+    window.addEventListener('popstate', () => {
+      resetAndScan(platform);
+    });
   }
   
-  async function startScan(platform) {
-    if (isScanning) return;
-    isScanning = true;
+  function getYouTubeVideoId() {
+    const url = window.location.href;
+    // Regular video
+    const match = url.match(/[?&]v=([^&]+)/);
+    if (match) return match[1];
+    // Shorts
+    const shortsMatch = url.match(/\/shorts\/([^?&]+)/);
+    if (shortsMatch) return shortsMatch[1];
+    return null;
+  }
+  
+  function checkForNewVideo(platform) {
+    const video = findVideo(platform);
+    if (!video) return;
     
-    // Clear previous results for fresh scan
-    lastScanResult = null;
-    if (resultOverlay) {
-      resultOverlay.style.display = 'none';
+    // Check if this is a different video
+    const videoSrc = video.src || video.currentSrc || video.baseURI;
+    const isNewVideo = videoSrc !== currentVideoSrc || video !== currentVideoElement;
+    
+    if (isNewVideo && video.readyState >= 2 && !video.paused) {
+      console.log(`VeriPulse: New video playing - triggering scan`);
+      currentVideoSrc = videoSrc;
+      currentVideoElement = video;
+      
+      // Clear any pending scan
+      if (scanTimeout) clearTimeout(scanTimeout);
+      
+      // Delay scan slightly to let video stabilize
+      scanTimeout = setTimeout(() => {
+        startAutoScan(platform, video);
+      }, AUTO_SCAN_DELAY);
     }
     
-    updateButton('scanning');
-    showResult({ status: 'scanning', message: 'Scanning video... 0%', progress: 0 });
+    // Also watch for video play event
+    if (!video._veripulseWatching) {
+      video._veripulseWatching = true;
+      
+      video.addEventListener('play', () => {
+        const src = video.src || video.currentSrc || video.baseURI;
+        if (src !== currentVideoSrc) {
+          currentVideoSrc = src;
+          currentVideoElement = video;
+          
+          if (scanTimeout) clearTimeout(scanTimeout);
+          scanTimeout = setTimeout(() => {
+            startAutoScan(platform, video);
+          }, AUTO_SCAN_DELAY);
+        }
+      });
+      
+      video.addEventListener('loadeddata', () => {
+        const src = video.src || video.currentSrc || video.baseURI;
+        if (src !== currentVideoSrc && !video.paused) {
+          currentVideoSrc = src;
+          currentVideoElement = video;
+          
+          if (scanTimeout) clearTimeout(scanTimeout);
+          scanTimeout = setTimeout(() => {
+            startAutoScan(platform, video);
+          }, AUTO_SCAN_DELAY);
+        }
+      });
+    }
+  }
+  
+  function resetAndScan(platform) {
+    // Reset state for new video
+    currentVideoSrc = null;
+    currentVideoElement = null;
+    isScanning = false;
+    
+    if (scanTimeout) clearTimeout(scanTimeout);
+    if (resultOverlay) resultOverlay.style.display = 'none';
+    
+    // Check for video after short delay
+    setTimeout(() => checkForNewVideo(platform), 500);
+  }
+  
+  async function startAutoScan(platform, video) {
+    // Debounce - don't scan too frequently
+    const now = Date.now();
+    if (now - lastScanTime < 3000) {
+      console.log("VeriPulse: Scan debounced (too soon)");
+      return;
+    }
+    
+    if (isScanning) {
+      console.log("VeriPulse: Scan already in progress");
+      return;
+    }
+    
+    if (!video || video.paused || video.ended) {
+      console.log("VeriPulse: Video not playing");
+      return;
+    }
+    
+    isScanning = true;
+    lastScanTime = now;
+    
+    console.log("VeriPulse: Starting auto-scan...");
+    showResult({ status: 'scanning', message: 'Analyzing video...', progress: 0 });
     
     try {
-      const video = findVideo(platform);
-      if (!video) {
-        throw new Error('No video found on this page');
-      }
-      
-      // Capture frames across the video for thorough analysis
+      // Capture frames
       const frames = await captureFramesWithProgress(video, SCAN_FRAME_COUNT, SCAN_INTERVAL, (progress) => {
-        showResult({ status: 'scanning', message: `Scanning video... ${Math.round(progress * 100)}%`, progress });
+        showResult({ status: 'scanning', message: `Analyzing... ${Math.round(progress * 100)}%`, progress });
       });
       
       if (frames.length === 0) {
-        throw new Error('Could not capture video frames');
+        throw new Error('Could not capture frames');
       }
       
       // Send to background for analysis
@@ -131,7 +258,6 @@
       if (response.success) {
         const result = response.result;
         
-        // Map verdict to status for UI
         let status = 'uncertain';
         const v = (result.verdict || '').toLowerCase();
         if (v === 'real') status = 'real';
@@ -152,7 +278,6 @@
           message: result.message,
           scanTime: result.scanTime
         });
-        updateButton(status);
       } else {
         throw new Error(response.error || 'Analysis failed');
       }
@@ -160,7 +285,6 @@
     } catch (error) {
       console.error('VeriPulse scan error:', error);
       showResult({ status: 'error', message: error.message });
-      updateButton('error');
     } finally {
       isScanning = false;
     }
@@ -171,19 +295,27 @@
     
     switch (platform) {
       case 'youtube':
+        // Try main video first, then any video
         video = document.querySelector('video.html5-main-video') || 
+                document.querySelector('ytd-player video') ||
+                document.querySelector('#shorts-player video') ||
                 document.querySelector('video');
         break;
       case 'instagram':
-        video = document.querySelector('video');
+        // Find visible video (for Reels)
+        const videos = Array.from(document.querySelectorAll('video'));
+        video = videos.find(v => {
+          const rect = v.getBoundingClientRect();
+          return rect.top >= -100 && rect.top < window.innerHeight / 2;
+        }) || videos[0];
         break;
       case 'meet':
       case 'zoom':
       case 'teams':
-        // Find the largest video (usually the main speaker)
-        const videos = Array.from(document.querySelectorAll('video'));
-        if (videos.length > 0) {
-          video = videos.reduce((a, b) => {
+        // Find the largest video
+        const allVideos = Array.from(document.querySelectorAll('video'));
+        if (allVideos.length > 0) {
+          video = allVideos.reduce((a, b) => {
             const aArea = (a.videoWidth || a.clientWidth) * (a.videoHeight || a.clientHeight);
             const bArea = (b.videoWidth || b.clientWidth) * (b.videoHeight || b.clientHeight);
             return aArea > bArea ? a : b;
@@ -238,24 +370,17 @@
     return frames;
   }
   
-  function updateButton(status) {
-    if (!scanButton) return;
-    
-    scanButton.className = `vp-status-${status}`;
-    
-    const content = scanButton.querySelector('.vp-btn-content span');
-    if (content) {
-      const labels = {
-        scanning: 'Scanning...',
-        real: '✓ Real',
-        likely_real: '✓ Likely Real',
-        uncertain: '? Uncertain',
-        likely_fake: '⚠ Suspicious',
-        fake: '⚠ Fake',
-        error: 'Retry'
+  // Debounce helper for scroll events
+  function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+      const later = () => {
+        clearTimeout(timeout);
+        func(...args);
       };
-      content.textContent = labels[status] || 'Scan';
-    }
+      clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
+    };
   }
   
   function showResult(result) {
@@ -357,21 +482,30 @@
     
     resultOverlay.style.display = 'block';
     
-    // Auto-hide after 15 seconds for non-scanning results
+    // Auto-hide after 10 seconds
     if (result.status !== 'scanning') {
       setTimeout(() => {
         if (resultOverlay) resultOverlay.style.display = 'none';
-      }, 15000);
+      }, 10000);
     }
   }
   
-  // Listen for messages from popup
+  // Listen for messages from popup (manual re-scan)
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'triggerScan') {
       const platform = detectPlatform();
       if (platform) {
-        startScan(platform);
-        sendResponse({ success: true });
+        // Force re-scan
+        currentVideoSrc = null;
+        currentVideoElement = null;
+        isScanning = false;
+        const video = findVideo(platform);
+        if (video) {
+          startAutoScan(platform, video);
+          sendResponse({ success: true });
+        } else {
+          sendResponse({ success: false, error: 'No video found' });
+        }
       } else {
         sendResponse({ success: false, error: 'Unsupported platform' });
       }
