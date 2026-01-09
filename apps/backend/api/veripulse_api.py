@@ -779,6 +779,429 @@ async def analyze_file(file: UploadFile = File(...)):
 
 
 # ============================================================
+# Frame-Only Analysis (For Chrome Extension - No Audio)
+# ============================================================
+
+class FrameAnalysisRequest(BaseModel):
+    """Request model for frame analysis - base64 encoded image."""
+    image: str  # Base64 encoded image data
+
+
+class FrameAnalysisResponse(BaseModel):
+    """Response for single frame analysis."""
+    verdict: str  # "REAL", "LIKELY_REAL", "UNCERTAIN", "LIKELY_FAKE", "FAKE"
+    confidence: float
+    trust_score: float
+    reasons: List[str]
+    components: dict
+
+
+@router.post("/veripulse/analyze-frame", response_model=FrameAnalysisResponse)
+async def analyze_frame(file: UploadFile = File(...)):
+    """
+    Analyze a single image frame for deepfake detection.
+    
+    This endpoint is optimized for:
+    - Chrome extension quick scans
+    - Video frame analysis (no audio)
+    - Fast response times (<500ms per frame)
+    
+    Uses visual-only signals:
+    - Skin texture analysis
+    - Frequency artifact detection
+    - Face landmark consistency
+    - Color/lighting analysis
+    """
+    import time
+    start_time = time.time()
+    
+    try:
+        # Read image data
+        content = await file.read()
+        img_array = np.frombuffer(content, dtype=np.uint8)
+        frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        
+        if frame is None:
+            raise HTTPException(status_code=400, detail="Invalid image data")
+        
+        # Initialize detector
+        detector = get_detector()
+        
+        # Analyze the single frame
+        result = analyze_single_frame(detector, frame)
+        
+        elapsed = int((time.time() - start_time) * 1000)
+        print(f"⚡ Frame analyzed in {elapsed}ms: {result['verdict']} ({result['confidence']:.1%})")
+        
+        return FrameAnalysisResponse(
+            verdict=result['verdict'],
+            confidence=result['confidence'],
+            trust_score=result['trust_score'],
+            reasons=result['reasons'],
+            components=result['components']
+        )
+        
+    except Exception as e:
+        print(f"❌ Frame analysis error: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def analyze_single_frame(detector, frame) -> dict:
+    """
+    Enhanced frame analysis with aggressive AI detection.
+    
+    Key AI indicators detected:
+    - Surreal/hyper-smooth textures (AI hallucination patterns)
+    - Edge glow artifacts (yellow/green tint at edges)
+    - Unnatural color saturation (over-saturated or perfect gradients)
+    - Missing high-frequency details (AI smoothing)
+    - Pattern repetition (AI tends to repeat elements)
+    - Anatomical impossibilities (warped proportions)
+    """
+    scores = {}
+    reasons = []
+    h, w = frame.shape[:2]
+    face_detected = False
+    face_region = None
+    
+    # Convert to different color spaces
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    lab_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+    
+    # Try face detection
+    results = detector.face_mesh.process(rgb_frame)
+    
+    if results.multi_face_landmarks:
+        face_detected = True
+        landmarks = results.multi_face_landmarks[0].landmark
+        x_coords = [lm.x * w for lm in landmarks]
+        y_coords = [lm.y * h for lm in landmarks]
+        x1 = max(0, int(min(x_coords)) - 20)
+        y1 = max(0, int(min(y_coords)) - 20)
+        x2 = min(w, int(max(x_coords)) + 20)
+        y2 = min(h, int(max(y_coords)) + 20)
+        if (x2 - x1) > 50 and (y2 - y1) > 50:
+            face_region = frame[y1:y2, x1:x2]
+    
+    # ================================================================
+    # CRITICAL AI DETECTION SIGNALS
+    # ================================================================
+    
+    # 1. HYPER-SMOOTH TEXTURE DETECTION (AI's biggest tell)
+    laplacian = cv2.Laplacian(gray_frame, cv2.CV_64F)
+    texture_var = laplacian.var()
+    
+    # Check multiple scales for smoothness
+    blur_3 = cv2.GaussianBlur(gray_frame, (3, 3), 0)
+    blur_7 = cv2.GaussianBlur(gray_frame, (7, 7), 0)
+    blur_15 = cv2.GaussianBlur(gray_frame, (15, 15), 0)
+    
+    detail_3 = np.std(gray_frame.astype(float) - blur_3.astype(float))
+    detail_7 = np.std(gray_frame.astype(float) - blur_7.astype(float))
+    detail_15 = np.std(gray_frame.astype(float) - blur_15.astype(float))
+    
+    # AI images lose detail at medium scales but keep high-level structure
+    detail_ratio = detail_3 / (detail_15 + 1e-6)
+    
+    if texture_var < 50 or detail_ratio > 8:
+        scores['ai_smoothness'] = 0.15
+        reasons.append("🚨 HYPER-SMOOTH texture - strong AI indicator")
+    elif texture_var < 150 or detail_ratio > 5:
+        scores['ai_smoothness'] = 0.30
+        reasons.append("⚠️ Unusually smooth - possible AI generation")
+    elif texture_var < 300:
+        scores['ai_smoothness'] = 0.55
+    else:
+        scores['ai_smoothness'] = 0.75
+    
+    # 2. EDGE GLOW DETECTION (Yellow/green tint at edges - AI artifact)
+    try:
+        edges = cv2.Canny(gray_frame, 100, 200)
+        edge_mask = cv2.dilate(edges, np.ones((5, 5), np.uint8), iterations=2)
+        
+        # Check color at edge regions
+        b, g, r = cv2.split(frame)
+        
+        edge_pixels = edge_mask > 0
+        if np.sum(edge_pixels) > 100:
+            # Calculate color bias at edges
+            edge_r = np.mean(r[edge_pixels])
+            edge_g = np.mean(g[edge_pixels])
+            edge_b = np.mean(b[edge_pixels])
+            
+            # Yellow glow = high R + high G, low B
+            yellow_bias = (edge_r + edge_g) / 2 - edge_b
+            green_bias = edge_g - (edge_r + edge_b) / 2
+            
+            if yellow_bias > 30 or green_bias > 25:
+                scores['edge_glow'] = 0.20
+                reasons.append("🚨 Edge glow artifact detected - AI generation pattern")
+            elif yellow_bias > 15 or green_bias > 12:
+                scores['edge_glow'] = 0.40
+                reasons.append("⚠️ Suspicious edge coloring")
+            else:
+                scores['edge_glow'] = 0.70
+        else:
+            scores['edge_glow'] = 0.50
+    except:
+        scores['edge_glow'] = 0.50
+    
+    # 3. UNNATURAL COLOR SATURATION (AI over-saturates or creates impossible colors)
+    try:
+        h_channel, s_channel, v_channel = cv2.split(hsv_frame)
+        
+        # Check saturation distribution
+        sat_mean = np.mean(s_channel)
+        sat_std = np.std(s_channel)
+        sat_max = np.percentile(s_channel, 99)
+        
+        # AI often has regions of extremely high saturation
+        high_sat_ratio = np.sum(s_channel > 200) / s_channel.size
+        
+        # Also check for too-perfect color gradients
+        sat_gradient = np.abs(np.diff(s_channel.astype(float), axis=0)).mean()
+        
+        if high_sat_ratio > 0.15 or sat_mean > 140:
+            scores['color_saturation'] = 0.25
+            reasons.append("🚨 Hyper-saturated colors - AI generation artifact")
+        elif high_sat_ratio > 0.08 or sat_mean > 110:
+            scores['color_saturation'] = 0.40
+            reasons.append("⚠️ Unusually vivid colors")
+        elif sat_gradient < 5:
+            scores['color_saturation'] = 0.35
+            reasons.append("⚠️ Too-smooth color transitions")
+        else:
+            scores['color_saturation'] = 0.70
+    except:
+        scores['color_saturation'] = 0.50
+    
+    # 4. SURREAL/DREAMLIKE QUALITY DETECTION
+    try:
+        # AI images often have a "dreamy" quality from over-processed lighting
+        l_channel = lab_frame[:, :, 0]
+        
+        # Check contrast distribution
+        local_contrast = cv2.Laplacian(l_channel, cv2.CV_64F)
+        contrast_uniformity = np.std(np.abs(local_contrast))
+        
+        # AI images have very uniform local contrast (everything equally lit)
+        if contrast_uniformity < 15:
+            scores['surreal_lighting'] = 0.25
+            reasons.append("🚨 Surreal uniform lighting - AI hallucination pattern")
+        elif contrast_uniformity < 30:
+            scores['surreal_lighting'] = 0.40
+            reasons.append("⚠️ Unusual lighting uniformity")
+        else:
+            scores['surreal_lighting'] = 0.70
+    except:
+        scores['surreal_lighting'] = 0.50
+    
+    # 5. MISSING HIGH-FREQUENCY DETAIL (AI smoothing fingerprint)
+    try:
+        # FFT analysis
+        gray_resized = cv2.resize(gray_frame, (256, 256))
+        f_transform = np.fft.fft2(gray_resized)
+        f_shift = np.fft.fftshift(f_transform)
+        magnitude = np.abs(f_shift)
+        
+        # Analyze frequency bands
+        center = 128
+        
+        # High frequency (edges, texture) - outer ring
+        high_freq_mask = np.zeros((256, 256), dtype=bool)
+        for i in range(256):
+            for j in range(256):
+                dist = np.sqrt((i - center)**2 + (j - center)**2)
+                if dist > 80:
+                    high_freq_mask[i, j] = True
+        
+        # Low frequency (overall structure) - inner circle
+        low_freq_mask = np.zeros((256, 256), dtype=bool)
+        for i in range(256):
+            for j in range(256):
+                dist = np.sqrt((i - center)**2 + (j - center)**2)
+                if dist < 30:
+                    low_freq_mask[i, j] = True
+        
+        high_freq_energy = np.mean(magnitude[high_freq_mask])
+        low_freq_energy = np.mean(magnitude[low_freq_mask])
+        
+        freq_ratio = high_freq_energy / (low_freq_energy + 1e-6)
+        
+        if freq_ratio < 0.005:
+            scores['freq_detail'] = 0.20
+            reasons.append("🚨 Missing fine details - AI smoothing detected")
+        elif freq_ratio < 0.015:
+            scores['freq_detail'] = 0.35
+            reasons.append("⚠️ Low high-frequency content")
+        elif freq_ratio < 0.03:
+            scores['freq_detail'] = 0.55
+        else:
+            scores['freq_detail'] = 0.75
+    except:
+        scores['freq_detail'] = 0.50
+    
+    # 6. PATTERN/TEXTURE REPETITION (AI repeats patterns)
+    try:
+        # Check for repeating patterns using autocorrelation
+        gray_small = cv2.resize(gray_frame, (128, 128))
+        
+        # Compute autocorrelation
+        f = np.fft.fft2(gray_small)
+        autocorr = np.fft.ifft2(f * np.conj(f)).real
+        autocorr = np.fft.fftshift(autocorr)
+        
+        # Normalize
+        autocorr = autocorr / autocorr.max()
+        
+        # Check for secondary peaks (indicates repetition)
+        center_y, center_x = 64, 64
+        # Exclude center region
+        autocorr[center_y-10:center_y+10, center_x-10:center_x+10] = 0
+        
+        secondary_peak = np.max(autocorr)
+        
+        if secondary_peak > 0.4:
+            scores['pattern_repeat'] = 0.25
+            reasons.append("🚨 Pattern repetition detected - AI generation artifact")
+        elif secondary_peak > 0.25:
+            scores['pattern_repeat'] = 0.45
+            reasons.append("⚠️ Suspicious pattern regularity")
+        else:
+            scores['pattern_repeat'] = 0.70
+    except:
+        scores['pattern_repeat'] = 0.50
+    
+    # 7. ANATOMICAL CHECK (for images with faces/bodies)
+    if face_detected and face_region is not None:
+        try:
+            # Check face symmetry (AI often over-symmetrizes)
+            face_gray = cv2.cvtColor(face_region, cv2.COLOR_BGR2GRAY)
+            fh, fw = face_gray.shape
+            
+            left_half = face_gray[:, :fw//2]
+            right_half = cv2.flip(face_gray[:, fw//2:], 1)
+            
+            # Resize to match
+            min_w = min(left_half.shape[1], right_half.shape[1])
+            left_half = left_half[:, :min_w]
+            right_half = right_half[:, :min_w]
+            
+            symmetry_diff = np.mean(np.abs(left_half.astype(float) - right_half.astype(float)))
+            
+            if symmetry_diff < 10:
+                scores['face_symmetry'] = 0.30
+                reasons.append("⚠️ Face too symmetrical - possible AI")
+            else:
+                scores['face_symmetry'] = 0.70
+                reasons.append("✓ Natural facial asymmetry")
+                
+            # Check face texture
+            face_lap = cv2.Laplacian(face_gray, cv2.CV_64F)
+            face_texture = face_lap.var()
+            
+            if face_texture < 30:
+                scores['face_texture'] = 0.20
+                reasons.append("🚨 Face unnaturally smooth - AI indicator")
+            elif face_texture < 80:
+                scores['face_texture'] = 0.40
+            else:
+                scores['face_texture'] = 0.75
+        except:
+            scores['face_symmetry'] = 0.50
+            scores['face_texture'] = 0.50
+    
+    # 8. NOISE PATTERN ANALYSIS
+    try:
+        # Real cameras have characteristic noise
+        noise = gray_frame.astype(float) - cv2.GaussianBlur(gray_frame, (5, 5), 0).astype(float)
+        noise_std = np.std(noise)
+        noise_kurtosis = ((noise - noise.mean())**4).mean() / (noise_std**4 + 1e-6)
+        
+        # AI images have unnaturally clean or uniformly distributed noise
+        if noise_std < 2:
+            scores['noise_pattern'] = 0.25
+            reasons.append("🚨 No camera noise - AI generated")
+        elif noise_kurtosis > 10:
+            scores['noise_pattern'] = 0.35
+            reasons.append("⚠️ Unusual noise distribution")
+        else:
+            scores['noise_pattern'] = 0.70
+    except:
+        scores['noise_pattern'] = 0.50
+    
+    # ================================================================
+    # AGGREGATE SCORES WITH HEAVY WEIGHT ON AI INDICATORS
+    # ================================================================
+    
+    weights = {
+        'ai_smoothness': 0.20,      # Most important
+        'edge_glow': 0.15,          # Very telling
+        'color_saturation': 0.12,
+        'surreal_lighting': 0.12,
+        'freq_detail': 0.12,
+        'pattern_repeat': 0.10,
+        'noise_pattern': 0.10,
+        'face_symmetry': 0.05,
+        'face_texture': 0.04
+    }
+    
+    # Calculate weighted score
+    total_weight = 0
+    total_score = 0
+    
+    for key, weight in weights.items():
+        if key in scores:
+            total_score += scores[key] * weight
+            total_weight += weight
+    
+    if total_weight > 0:
+        final_score = total_score / total_weight
+    else:
+        final_score = 0.5
+    
+    # Apply penalty if multiple strong AI indicators found
+    strong_ai_indicators = sum(1 for k, v in scores.items() if v < 0.30)
+    if strong_ai_indicators >= 3:
+        final_score *= 0.7  # Heavy penalty
+        reasons.insert(0, "🚨 MULTIPLE AI INDICATORS DETECTED")
+    elif strong_ai_indicators >= 2:
+        final_score *= 0.85
+    
+    # Clamp score
+    final_score = max(0.05, min(0.95, final_score))
+    
+    # Determine verdict with STRICTER thresholds
+    if final_score >= 0.70:
+        verdict = "REAL"
+        confidence = final_score
+    elif final_score >= 0.55:
+        verdict = "LIKELY_REAL"
+        confidence = final_score
+    elif final_score >= 0.40:
+        verdict = "UNCERTAIN"
+        confidence = 0.5
+    elif final_score >= 0.25:
+        verdict = "LIKELY_FAKE"
+        confidence = 1 - final_score
+    else:
+        verdict = "FAKE"
+        confidence = min(0.95, 1 - final_score)
+    
+    return {
+        'verdict': verdict,
+        'confidence': round(confidence, 3),
+        'trust_score': round(final_score, 3),
+        'reasons': reasons[:8],
+        'components': {k: round(v, 3) for k, v in scores.items()},
+        'face_detected': face_detected
+    }
+
+
+# ============================================================
 # URL Analysis Endpoint (For Chrome Extension & Web UI)
 # ============================================================
 
