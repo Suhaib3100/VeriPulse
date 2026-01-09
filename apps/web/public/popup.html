@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=400, initial-scale=1.0">
+  <title>VeriPulse</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      width: 380px;
+      min-height: 500px;
+      background: linear-gradient(180deg, #0F172A 0%, #1E293B 100%);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: white;
+    }
+    
+    .header {
+      background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+      padding: 20px;
+      text-align: center;
+    }
+    
+    .logo {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin-bottom: 5px;
+    }
+    
+    .logo svg {
+      width: 32px;
+      height: 32px;
+    }
+    
+    .logo h1 {
+      font-size: 24px;
+      font-weight: 700;
+    }
+    
+    .tagline {
+      font-size: 12px;
+      opacity: 0.9;
+    }
+    
+    .content {
+      padding: 20px;
+    }
+    
+    .status-card {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    
+    .status-row:last-child {
+      margin-bottom: 0;
+    }
+    
+    .status-label {
+      color: #9CA3AF;
+      font-size: 13px;
+    }
+    
+    .status-value {
+      font-weight: 600;
+      font-size: 13px;
+    }
+    
+    .status-value.online { color: #22C55E; }
+    .status-value.offline { color: #EF4444; }
+    .status-value.supported { color: #22C55E; }
+    .status-value.unsupported { color: #6B7280; }
+    
+    .scan-section {
+      text-align: center;
+      padding: 20px 0;
+    }
+    
+    .scan-btn {
+      background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+      color: white;
+      border: none;
+      padding: 16px 40px;
+      border-radius: 50px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+    }
+    
+    .scan-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
+    }
+    
+    .scan-btn:disabled {
+      background: #4B5563;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    
+    .scan-btn.scanning {
+      background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
+    }
+    
+    .result-section {
+      display: none;
+      margin-top: 20px;
+    }
+    
+    .result-section.visible {
+      display: block;
+      animation: fadeIn 0.3s ease;
+    }
+    
+    .result-card {
+      border-radius: 12px;
+      padding: 20px;
+      text-align: center;
+    }
+    
+    .result-card.real {
+      background: rgba(34, 197, 94, 0.15);
+      border: 2px solid #22C55E;
+    }
+    
+    .result-card.fake {
+      background: rgba(239, 68, 68, 0.15);
+      border: 2px solid #EF4444;
+    }
+    
+    .result-card.error {
+      background: rgba(107, 114, 128, 0.15);
+      border: 2px solid #6B7280;
+    }
+    
+    .result-icon {
+      font-size: 48px;
+      margin-bottom: 10px;
+    }
+    
+    .result-verdict {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 5px;
+    }
+    
+    .result-card.real .result-verdict { color: #22C55E; }
+    .result-card.fake .result-verdict { color: #EF4444; }
+    .result-card.error .result-verdict { color: #6B7280; }
+    
+    .result-confidence {
+      font-size: 14px;
+      color: #9CA3AF;
+      margin-bottom: 10px;
+    }
+    
+    .result-message {
+      font-size: 13px;
+      color: #D1D5DB;
+      line-height: 1.5;
+    }
+    
+    .result-time {
+      font-size: 12px;
+      color: #6B7280;
+      margin-top: 10px;
+    }
+    
+    .platforms {
+      margin-top: 20px;
+    }
+    
+    .platforms h3 {
+      font-size: 13px;
+      color: #9CA3AF;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    .platform-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+    
+    .platform-item {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 8px;
+      padding: 12px 8px;
+      text-align: center;
+      font-size: 11px;
+      color: #9CA3AF;
+      transition: all 0.2s;
+    }
+    
+    .platform-item:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+    
+    .platform-item .icon {
+      font-size: 20px;
+      margin-bottom: 4px;
+    }
+    
+    .footer {
+      padding: 15px 20px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      text-align: center;
+    }
+    
+    .footer a {
+      color: #10B981;
+      text-decoration: none;
+      font-size: 12px;
+    }
+    
+    .footer a:hover {
+      text-decoration: underline;
+    }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+    
+    .scanning .scan-btn {
+      animation: pulse 1.5s infinite;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        <path d="M9 12l2 2 4-4"/>
+      </svg>
+      <h1>VeriPulse</h1>
+    </div>
+    <p class="tagline">AI-Powered Deepfake Detection</p>
+  </div>
+  
+  <div class="content">
+    <div class="status-card">
+      <div class="status-row">
+        <span class="status-label">Backend Status</span>
+        <span class="status-value" id="backendStatus">Checking...</span>
+      </div>
+      <div class="status-row">
+        <span class="status-label">Current Page</span>
+        <span class="status-value" id="pageStatus">Detecting...</span>
+      </div>
+    </div>
+    
+    <div class="scan-section" id="scanSection">
+      <button class="scan-btn" id="scanBtn">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <polygon points="10,8 16,12 10,16"/>
+        </svg>
+        <span id="scanBtnText">Scan Video</span>
+      </button>
+      <p style="font-size: 12px; color: #6B7280; margin-top: 10px;">
+        Scans in ~1 second
+      </p>
+    </div>
+    
+    <div class="result-section" id="resultSection">
+      <div class="result-card" id="resultCard">
+        <div class="result-icon" id="resultIcon">✅</div>
+        <div class="result-verdict" id="resultVerdict">REAL</div>
+        <div class="result-confidence" id="resultConfidence">95% confidence</div>
+        <div class="result-message" id="resultMessage">This video appears to be genuine.</div>
+        <div class="result-time" id="resultTime">Scanned in 850ms</div>
+      </div>
+    </div>
+    
+    <div class="platforms">
+      <h3>Supported Platforms</h3>
+      <div class="platform-grid">
+        <div class="platform-item">
+          <div class="icon">▶️</div>
+          <div>YouTube</div>
+        </div>
+        <div class="platform-item">
+          <div class="icon">📷</div>
+          <div>Instagram</div>
+        </div>
+        <div class="platform-item">
+          <div class="icon">🎥</div>
+          <div>Google Meet</div>
+        </div>
+        <div class="platform-item">
+          <div class="icon">💻</div>
+          <div>Zoom</div>
+        </div>
+        <div class="platform-item">
+          <div class="icon">👥</div>
+          <div>MS Teams</div>
+        </div>
+        <div class="platform-item">
+          <div class="icon">🌐</div>
+          <div>Any Video</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <div class="footer">
+    <a href="http://localhost:3000" target="_blank">Open Full Dashboard →</a>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>

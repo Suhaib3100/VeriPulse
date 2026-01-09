@@ -5,15 +5,22 @@ import { useEffect, useRef, useState } from "react";
 export default function Home() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const urlVideoRef = useRef<HTMLVideoElement>(null);
   const [socket, setSocket] = useState<WebSocket | null>(null);
   const [result, setResult] = useState<any>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [scanComplete, setScanComplete] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'live' | 'upload'>('live');
+  const [activeTab, setActiveTab] = useState<'live' | 'upload' | 'url'>('live');
   const [uploadResult, setUploadResult] = useState<any>(null);
   const [isUploading, setIsUploading] = useState(false);
   const sendingRef = useRef(true);  // Control frame sending
+  
+  // URL Scanner state
+  const [videoUrl, setVideoUrl] = useState('');
+  const [urlResult, setUrlResult] = useState<any>(null);
+  const [isUrlScanning, setIsUrlScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState(0);
 
   useEffect(() => {
     return () => {
@@ -212,6 +219,12 @@ export default function Home() {
               className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${activeTab === 'upload' ? 'bg-emerald-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
             >
               Upload File
+            </button>
+            <button 
+              onClick={() => setActiveTab('url')}
+              className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${activeTab === 'url' ? 'bg-emerald-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
+            >
+              🔗 URL Scan
             </button>
           </div>
         </div>
@@ -505,6 +518,202 @@ export default function Home() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* URL Scanner Tab */}
+        {activeTab === 'url' && (
+          <div className="space-y-6">
+            <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+              <div className="text-center space-y-4">
+                <div className="text-6xl mb-4">🔗</div>
+                <h2 className="text-xl font-bold">Scan Video URL</h2>
+                <p className="text-zinc-400 text-sm">
+                  Paste a YouTube or Instagram video URL to analyze for deepfake detection
+                </p>
+                
+                <div className="flex gap-3 max-w-xl mx-auto">
+                  <input
+                    type="text"
+                    value={videoUrl}
+                    onChange={(e) => setVideoUrl(e.target.value)}
+                    placeholder="https://youtube.com/watch?v=... or https://instagram.com/reel/..."
+                    className="flex-1 px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    disabled={isUrlScanning}
+                  />
+                  <button
+                    onClick={async () => {
+                      if (!videoUrl.trim()) return;
+                      
+                      setIsUrlScanning(true);
+                      setUrlResult(null);
+                      setScanProgress(0);
+                      
+                      try {
+                        // Fast scan - send URL to backend for quick analysis
+                        const progressInterval = setInterval(() => {
+                          setScanProgress(prev => Math.min(prev + 15, 90));
+                        }, 200);
+                        
+                        const response = await fetch('http://localhost:8000/api/v1/veripulse/analyze-url', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ url: videoUrl })
+                        });
+                        
+                        clearInterval(progressInterval);
+                        setScanProgress(100);
+                        
+                        if (response.ok) {
+                          const data = await response.json();
+                          setUrlResult(data);
+                        } else {
+                          setUrlResult({ error: 'Failed to analyze video', classification: 'ERROR' });
+                        }
+                      } catch (err) {
+                        console.error('URL scan error:', err);
+                        setUrlResult({ error: 'Could not connect to backend', classification: 'ERROR' });
+                      } finally {
+                        setIsUrlScanning(false);
+                      }
+                    }}
+                    disabled={isUrlScanning || !videoUrl.trim()}
+                    className={`px-6 py-3 rounded-lg font-medium transition-all ${
+                      isUrlScanning || !videoUrl.trim()
+                        ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed'
+                        : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                    }`}
+                  >
+                    {isUrlScanning ? '⏳ Scanning...' : '🔍 Scan'}
+                  </button>
+                </div>
+
+                {/* Scanning Progress */}
+                {isUrlScanning && (
+                  <div className="max-w-xl mx-auto">
+                    <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-emerald-500 transition-all duration-300"
+                        style={{ width: `${scanProgress}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-zinc-500 mt-2">Extracting frames & analyzing...</p>
+                  </div>
+                )}
+
+                {/* Supported Platforms */}
+                <div className="flex justify-center gap-6 mt-6 pt-4 border-t border-zinc-800">
+                  <div className="flex items-center gap-2 text-zinc-500">
+                    <span className="text-xl">📺</span>
+                    <span className="text-sm">YouTube</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-zinc-500">
+                    <span className="text-xl">📸</span>
+                    <span className="text-sm">Instagram</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-zinc-500">
+                    <span className="text-xl">🎵</span>
+                    <span className="text-sm">TikTok</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* URL Scan Result */}
+            {urlResult && (
+              <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                {urlResult.error ? (
+                  <div className="text-center py-8">
+                    <div className="text-6xl mb-4">❌</div>
+                    <h3 className="text-xl font-bold text-red-400">Analysis Failed</h3>
+                    <p className="text-zinc-400 mt-2">{urlResult.error}</p>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <div className="text-center">
+                      <div className="text-6xl mb-4">
+                        {urlResult.classification === "REAL" || urlResult.classification?.includes("LIKELY REAL") ? "✅" : 
+                         urlResult.classification?.includes("UNCERTAIN") ? "⚠️" : "🚫"}
+                      </div>
+                      <h3 className={`text-3xl font-bold ${
+                        urlResult.classification === "REAL" || urlResult.classification?.includes("LIKELY REAL") ? "text-emerald-400" :
+                        urlResult.classification?.includes("UNCERTAIN") ? "text-yellow-400" :
+                        "text-red-400"
+                      }`}>
+                        {urlResult.classification}
+                      </h3>
+                      <p className="text-zinc-400 mt-2">
+                        Confidence: {urlResult.confidence ? `${(urlResult.confidence * 100).toFixed(1)}%` : 'N/A'}
+                      </p>
+                    </div>
+
+                    {/* Quick Stats */}
+                    <div className="grid grid-cols-3 gap-4">
+                      <MetricCard 
+                        label="Trust Score" 
+                        value={urlResult.trust_score ? `${(urlResult.trust_score * 100).toFixed(0)}%` : "--"}
+                        color={urlResult.trust_score > 0.7 ? "text-emerald-400" : urlResult.trust_score > 0.4 ? "text-yellow-400" : "text-red-400"}
+                      />
+                      <MetricCard 
+                        label="Frames Analyzed" 
+                        value={urlResult.frames_analyzed || 5}
+                        color="text-blue-400"
+                      />
+                      <MetricCard 
+                        label="Scan Time" 
+                        value={urlResult.scan_time ? `${urlResult.scan_time}ms` : "<1s"}
+                        color="text-purple-400"
+                      />
+                    </div>
+
+                    {/* Reasons */}
+                    {urlResult.reasons && urlResult.reasons.length > 0 && (
+                      <div className="space-y-2">
+                        <h4 className="text-sm font-medium text-zinc-500">Analysis Details</h4>
+                        <div className="bg-black/20 p-4 rounded-lg space-y-2">
+                          {urlResult.reasons.map((r: string, i: number) => (
+                            <div key={i} className={`flex items-start gap-2 ${
+                              r.includes('✓') || r.includes('real') ? 'text-emerald-400' : 
+                              r.includes('fake') || r.includes('synthetic') ? 'text-red-400' : 'text-zinc-300'
+                            }`}>
+                              <span className="flex-shrink-0">{r.includes('✓') ? '✅' : r.includes('fake') ? '⚠️' : '📊'}</span>
+                              <span>{r}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <button
+                      onClick={() => {
+                        setUrlResult(null);
+                        setVideoUrl('');
+                        setScanProgress(0);
+                      }}
+                      className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm font-medium transition-all"
+                    >
+                      🔄 Scan Another URL
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Chrome Extension Promo */}
+            <div className="bg-gradient-to-r from-blue-900/30 to-purple-900/30 rounded-2xl p-6 border border-blue-500/30">
+              <div className="flex items-center gap-4">
+                <div className="text-4xl">🧩</div>
+                <div className="flex-1">
+                  <h3 className="font-bold text-blue-300">Get the Chrome Extension</h3>
+                  <p className="text-zinc-400 text-sm">
+                    Scan videos directly on YouTube, Instagram, and video calls with one click!
+                  </p>
+                </div>
+                <button className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium transition-all">
+                  Install Extension
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
