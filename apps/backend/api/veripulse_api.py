@@ -1174,22 +1174,21 @@ def analyze_single_frame(detector, frame) -> dict:
     # Clamp score
     final_score = max(0.05, min(0.95, final_score))
     
-    # Determine verdict with STRICTER thresholds
-    if final_score >= 0.70:
+    # Determine verdict - Below 60% = AI video
+    if final_score >= 0.75:
         verdict = "REAL"
         confidence = final_score
     elif final_score >= 0.55:
         verdict = "LIKELY_REAL"
         confidence = final_score
-    elif final_score >= 0.40:
-        verdict = "UNCERTAIN"
-        confidence = 0.5
-    elif final_score >= 0.25:
+    elif final_score >= 0.45:
         verdict = "LIKELY_FAKE"
         confidence = 1 - final_score
+        reasons.insert(0, "⚠️ Score below 60% - likely AI generated")
     else:
         verdict = "FAKE"
         confidence = min(0.95, 1 - final_score)
+        reasons.insert(0, "🚨 AI-GENERATED VIDEO DETECTED")
     
     return {
         'verdict': verdict,
