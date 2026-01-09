@@ -1,0 +1,193 @@
+/* VeriPulse Chrome Extension - Content Script Styles */
+
+/* Floating Scan Button */
+#veripulse-scan-btn {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 999999;
+  background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+  color: white;
+  padding: 12px 20px;
+  border-radius: 50px;
+  cursor: pointer;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
+  transition: all 0.3s ease;
+  user-select: none;
+}
+
+#veripulse-scan-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(16, 185, 129, 0.5);
+}
+
+#veripulse-scan-btn:active {
+  transform: translateY(0);
+}
+
+#veripulse-scan-btn .vp-btn-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#veripulse-scan-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Status variants */
+#veripulse-scan-btn.vp-status-scanning {
+  background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
+  box-shadow: 0 4px 15px rgba(245, 158, 11, 0.4);
+  animation: vp-pulse 1.5s infinite;
+}
+
+#veripulse-scan-btn.vp-status-real {
+  background: linear-gradient(135deg, #22C55E 0%, #16A34A 100%);
+  box-shadow: 0 4px 15px rgba(34, 197, 94, 0.4);
+}
+
+#veripulse-scan-btn.vp-status-fake {
+  background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%);
+  box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4);
+  animation: vp-shake 0.5s ease-in-out;
+}
+
+#veripulse-scan-btn.vp-status-error {
+  background: linear-gradient(135deg, #6B7280 0%, #4B5563 100%);
+  box-shadow: 0 4px 15px rgba(107, 114, 128, 0.4);
+}
+
+/* Result Overlay */
+#veripulse-result {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 999999;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.vp-result-card {
+  background: #1F2937;
+  border-radius: 16px;
+  padding: 20px;
+  min-width: 280px;
+  max-width: 350px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  border: 2px solid;
+  position: relative;
+  animation: vp-slideIn 0.3s ease-out;
+}
+
+.vp-result-card.vp-scanning {
+  border-color: #F59E0B;
+}
+
+.vp-result-card.vp-real {
+  border-color: #22C55E;
+}
+
+.vp-result-card.vp-fake {
+  border-color: #EF4444;
+}
+
+.vp-result-card.vp-error {
+  border-color: #6B7280;
+}
+
+.vp-result-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.vp-icon {
+  font-size: 24px;
+}
+
+.vp-verdict {
+  font-size: 20px;
+  font-weight: 700;
+  color: white;
+  flex: 1;
+}
+
+.vp-confidence {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #9CA3AF;
+}
+
+.vp-result-message {
+  color: #D1D5DB;
+  font-size: 14px;
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+.vp-scan-time {
+  color: #6B7280;
+  font-size: 12px;
+}
+
+.vp-close-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: none;
+  border: none;
+  color: #6B7280;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 5px;
+  line-height: 1;
+  transition: color 0.2s;
+}
+
+.vp-close-btn:hover {
+  color: white;
+}
+
+/* Animations */
+@keyframes vp-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes vp-shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-5px); }
+  40%, 80% { transform: translateX(5px); }
+}
+
+@keyframes vp-slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Platform-specific adjustments */
+/* YouTube - position above player controls */
+@media screen and (min-width: 1024px) {
+  .ytd-watch-flexy #veripulse-scan-btn {
+    bottom: 80px;
+  }
+}
+
+/* Instagram - avoid stories overlay */
+[class*="instagram"] #veripulse-scan-btn {
+  bottom: 100px;
+}
